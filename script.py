@@ -27,7 +27,7 @@ async def save_cme_to_pdf():
             page = await context.new_page()
             
             try:
-                await page.goto(url, wait_until="networkidle", timeout=60000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 
                 # Đợi 12 giây để bảng giá tải xong hoàn toàn
                 await page.wait_for_timeout(12000)
