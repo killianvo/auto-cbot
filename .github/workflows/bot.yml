@@ -2,8 +2,9 @@ name: Auto Get CME PDF
 
 on:
   schedule:
-    # Chạy tự động vào 15:00 chiều giờ VN mỗi ngày (8:00 UTC)
-    - cron: '0 8 * * *'
+    # Chạy vào 15:00 chiều giờ VN (8:00 UTC), chỉ chạy từ Thứ 2 đến Thứ 6 (1-5)
+    # Tự động bỏ qua Thứ 7 và Chủ Nhật
+    - cron: '0 8 * * 1-5'
   workflow_dispatch: # Nút này cho phép bạn bấm chạy thủ công bất kỳ lúc nào
 
 jobs:
@@ -27,9 +28,16 @@ jobs:
       - name: Chạy Bot lấy dữ liệu
         run: python script.py
 
+      - name: Tính toán ngày dữ liệu (Ngày hôm qua)
+        id: date_calc
+        run: |
+          # Lấy thời gian hiện tại trừ đi 1 ngày, định dạng thành Ngày-Tháng (Ví dụ: 18-06)
+          echo "DATA_DATE=$(date -d "yesterday" +'%d-%m')" >> $GITHUB_ENV
+
       - name: Lưu trữ 3 file PDF
         uses: actions/upload-artifact@v4
         with:
-          name: CME-Audit-PDFs
+          # File zip tải về sẽ có tên kèm ngày dạng: CME-Data-18-06
+          name: CME-Data-${{ env.DATA_DATE }}
           path: "*.pdf"
           retention-days: 90
