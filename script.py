@@ -15,9 +15,8 @@ async def save_cme_to_pdf():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=False, args=["--headless=new"]
+            headless=True, args=["--headless=new"]
         )
-        # Giả lập trình duyệt chuẩn để không bị CME chặn
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             viewport={"width": 1920, "height": 1080},
@@ -25,7 +24,6 @@ async def save_cme_to_pdf():
 
         date_str = datetime.now().strftime("%Y%m%d_%H%M")
 
-        # Lặp qua từng link để chụp PDF
         for name, url in urls.items():
             print(f"Đang xử lý {name}: {url}")
             page = await context.new_page()
@@ -35,10 +33,22 @@ async def save_cme_to_pdf():
                     url, wait_until="domcontentloaded", timeout=60000
                 )
 
-                # Đợi 15 giây để bảng giá tải ổn định dữ liệu từ API về
+                # Đợi 15 giây để bảng giá tải ổn định dữ liệu
                 await page.wait_for_timeout(15000)
 
-                # KỸ THUẬT 1: Giả lập cuộn chuột xuống đáy trang để kích hoạt load hết các tháng kỳ hạn xa
+                # === BƯỚC MỚI 1: CHỦ ĐỘNG BẤM NÚT ACCEPT COOKIE NẾU XUẤT HIỆN ===
+                try:
+                    cookie_button = page.locator("#onetrust-accept-btn-handler")
+                    if await cookie_button.is_visible():
+                        await cookie_button.click(timeout=3000)
+                        print(f"-> Đã bấm tắt bảng Cookie của {name}")
+                        await page.wait_for_timeout(
+                            1000
+                        )  # Đợi 1s cho hiệu ứng biến mất hẳn
+                except Exception as e:
+                    print(f"-> Không thấy nút Cookie hoặc lỗi bấm: {e}")
+
+                # Giả lập cuộn chuột xuống đáy trang để kích hoạt load hết các tháng kỳ hạn xa
                 await page.evaluate(
                     "window.scrollTo(0, document.body.scrollHeight);"
                 )
@@ -46,18 +56,31 @@ async def save_cme_to_pdf():
                 await page.evaluate("window.scrollTo(0, 0);")
                 await page.wait_for_timeout(1000)
 
-                # KỸ THUẬT 2: Tiêm mã CSS để phá vỡ khung cuộn, ép bảng giãn dài tự nhiên theo số dòng
-                # Chỉ ẩn thanh menu quảng cáo trên cùng (cmeHeader) và footer, GIỮ LẠI tiêu đề chứa ngày Trade Date
+                # === BƯỚC MỚI 2: TIÊM CSS XÓA BỎ HOÀN TOÀN CÁC LỚP PHỦ MỜ VÀ QUẢNG CÁO ===
                 await page.add_style_tag(
                     content="""
-                    header.cmeHeader, .col-md-3.sidebar, .cmeFooter, .cookie-consent, #onetrust-banner-sdk { 
+                    /* 1. Ẩn menu, footer, banner cookie và tất cả các loại popup/modal quảng cáo phát sinh */
+                    header.cmeHeader, .col-md-3.sidebar, .cmeFooter, .cookie-consent, 
+                    #onetrust-banner-sdk, #onetrust-consent-sdk, .onetrust-pc-dark-filter,
+                    [id*="onetrust"], [class*="modal-backdrop"], [class*="popup"], .parbase.banner { 
                         display: none !important; 
+                        visibility: hidden !important;
                     }
+                    
+                    /* 2. Ép bảng giãn dài tự nhiên theo số dòng */
                     html, body, .main-content, .cmeTable-wrapper, [class*="wrapper"], [class*="container"], [class*="table-responsive"] {
                         overflow: visible !important;
                         max-height: none !important;
                         height: auto !important;
                     }
+                    
+                    /* 3. QUAN TRỌNG: Mở khóa cuộn trang cho body (Đề phòng quảng cáo block không cho cuộn khi in) */
+                    body {
+                        overflow: visible !important;
+                        position: relative !important;
+                        background-color: #fff !important;
+                    }
+                    
                     .cmeTable {
                         width: 100% !important;
                     }
@@ -69,18 +92,14 @@ async def save_cme_to_pdf():
 
                 file_name = f"CME_{name}_Settlements_{date_str}.pdf"
 
-                # KỸ THUẬT 3: Tối ưu hóa các thông số PDF cho báo cáo tài chính rộng nhiều cột
+                # Xuất định dạng PDF khổ Ngang chuẩn Audit
                 await page.pdf(
                     path=file_name,
                     format="A4",
                     print_background=True,
-                    display_header_footer=True,  # Hiển thị URL và số trang ở rìa giấy
-
-                    # Tỷ lệ 85% kết hợp khổ Ngang (Landscape) giúp hiển thị trọn vẹn từ Open đến Settle/Open Interest
+                    display_header_footer=True,
                     scale=0.85,
                     landscape=True,
-
-                    # Đổi lề sang đơn vị mm chuẩn in ấn, giúp bảng cân đối và không bị rúc sát viền
                     margin={
                         "top": "15mm",
                         "bottom": "15mm",
@@ -88,10 +107,10 @@ async def save_cme_to_pdf():
                         "right": "12mm",
                     },
                 )
-                print(f"-> Đã lưu: {file_name}")
+                print(f"-> Đã lưu thành công: {file_name}")
 
             except Exception as e:
-                print(f"-> Lỗi tải {name}: {e}")
+                print(f"-> Lỗi khi xử lý {name}: {e}")
 
             finally:
                 await page.close()
