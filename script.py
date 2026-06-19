@@ -14,8 +14,9 @@ async def save_cme_to_pdf():
     }
 
     async with async_playwright() as p:
+        # GIỮ NGUYÊN dòng launch này vì nó giúp bypass Cloudflare trên GitHub Actions thành công
         browser = await p.chromium.launch(
-            headless=True, args=["--headless=new"]
+            headless=False, args=["--headless=new"]
         )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -24,6 +25,7 @@ async def save_cme_to_pdf():
 
         date_str = datetime.now().strftime("%Y%m%d_%H%M")
 
+        # Lặp qua từng link để chụp PDF
         for name, url in urls.items():
             print(f"Đang xử lý {name}: {url}")
             page = await context.new_page()
@@ -32,23 +34,10 @@ async def save_cme_to_pdf():
                 await page.goto(
                     url, wait_until="domcontentloaded", timeout=60000
                 )
+                # Chờ 12 giây để bảng giá tải xong dữ liệu ban đầu
+                await page.wait_for_timeout(12000)
 
-                # Đợi 15 giây để bảng giá tải ổn định dữ liệu
-                await page.wait_for_timeout(15000)
-
-                # === BƯỚC MỚI 1: CHỦ ĐỘNG BẤM NÚT ACCEPT COOKIE NẾU XUẤT HIỆN ===
-                try:
-                    cookie_button = page.locator("#onetrust-accept-btn-handler")
-                    if await cookie_button.is_visible():
-                        await cookie_button.click(timeout=3000)
-                        print(f"-> Đã bấm tắt bảng Cookie của {name}")
-                        await page.wait_for_timeout(
-                            1000
-                        )  # Đợi 1s cho hiệu ứng biến mất hẳn
-                except Exception as e:
-                    print(f"-> Không thấy nút Cookie hoặc lỗi bấm: {e}")
-
-                # Giả lập cuộn chuột xuống đáy trang để kích hoạt load hết các tháng kỳ hạn xa
+                # 1. Cuộn xuống đáy để kích hoạt tải (lazy load) các tháng tương lai xa
                 await page.evaluate(
                     "window.scrollTo(0, document.body.scrollHeight);"
                 )
@@ -56,61 +45,63 @@ async def save_cme_to_pdf():
                 await page.evaluate("window.scrollTo(0, 0);")
                 await page.wait_for_timeout(1000)
 
-                # === BƯỚC MỚI 2: TIÊM CSS XÓA BỎ HOÀN TOÀN CÁC LỚP PHỦ MỜ VÀ QUẢNG CÁO ===
-                await page.add_style_tag(
-                    content="""
-                    /* 1. Ẩn menu, footer, banner cookie và tất cả các loại popup/modal quảng cáo phát sinh */
-                    header.cmeHeader, .col-md-3.sidebar, .cmeFooter, .cookie-consent, 
-                    #onetrust-banner-sdk, #onetrust-consent-sdk, .onetrust-pc-dark-filter,
-                    [id*="onetrust"], [class*="modal-backdrop"], [class*="popup"], .parbase.banner { 
-                        display: none !important; 
-                        visibility: hidden !important;
-                    }
-                    
-                    /* 2. Ép bảng giãn dài tự nhiên theo số dòng */
-                    html, body, .main-content, .cmeTable-wrapper, [class*="wrapper"], [class*="container"], [class*="table-responsive"] {
-                        overflow: visible !important;
-                        max-height: none !important;
-                        height: auto !important;
-                    }
-                    
-                    /* 3. QUAN TRỌNG: Mở khóa cuộn trang cho body (Đề phòng quảng cáo block không cho cuộn khi in) */
-                    body {
-                        overflow: visible !important;
-                        position: relative !important;
-                        background-color: #fff !important;
-                    }
-                    
-                    .cmeTable {
-                        width: 100% !important;
-                    }
-                """
-                )
+                # 2. Thực thi Javascript dọn dẹp giao diện và bẻ gãy khung cuộn gây cắt hàng
+                await page.evaluate("""() => {
+                    // Tự động bấm nút Chấp nhận Cookie nếu có để dọn sạch màn hình
+                    const cookieBtn = document.querySelector('#onetrust-accept-btn-handler');
+                    if (cookieBtn) cookieBtn.click();
 
-                # Chuyển chế độ hiển thị sang dạng bản in (Print Media)
-                await page.emulate_media(media="print")
+                    // Ẩn menu quảng cáo và footer, GIỮ LẠI tiêu đề chứa ngày Trade Date ("Data as of...")
+                    const elementsToHide = [
+                        'header.cmeHeader', 
+                        '.cmeFooter', 
+                        '#onetrust-banner-sdk', 
+                        '#onetrust-consent-sdk',
+                        '.cookie-consent',
+                        '.modal-backdrop',
+                        '.parbase.banner'
+                    ];
+                    elementsToHide.forEach(selector => {
+                        const el = document.querySelector(selector);
+                        if (el) el.style.setProperty('display', 'none', 'important');
+                    });
+
+                    // SỬA LỖI CẮT HÀNG (Future Months): Ép các khung cuộn chứa bảng phải hiển thị tràn trang tự nhiên
+                    const wrappers = document.querySelectorAll('.cmeTable-wrapper, .table-responsive, .main-content');
+                    wrappers.forEach(el => {
+                        el.style.setProperty('overflow', 'visible', 'important');
+                        el.style.setProperty('max-height', 'none', 'important');
+                        el.style.setProperty('height', 'auto', 'important');
+                    });
+
+                    document.body.style.setProperty('overflow', 'visible', 'important');
+                    document.body.style.setProperty('height', 'auto', 'important');
+                }""")
+
+                # Chờ thêm 2 giây để giao diện cập nhật sau khi chạy JS ổn định layout
+                await page.wait_for_timeout(2000)
 
                 file_name = f"CME_{name}_Settlements_{date_str}.pdf"
 
-                # Xuất định dạng PDF khổ Ngang chuẩn Audit
+                # 3. Xuất file PDF khổ ngang sắc nét phục vụ kiểm toán
                 await page.pdf(
                     path=file_name,
                     format="A4",
                     print_background=True,
                     display_header_footer=True,
-                    scale=0.85,
-                    landscape=True,
+                    scale=0.85,  # Thu nhỏ nhẹ về 85% để các cột Open, High, Low, Settle vừa vặn khổ ngang
+                    landscape=True,  # Khổ ngang cực kỳ lý tưởng cho bảng biểu tài chính rộng nhiều cột
                     margin={
-                        "top": "15mm",
-                        "bottom": "15mm",
-                        "left": "12mm",
-                        "right": "12mm",
+                        "top": "40px",
+                        "bottom": "40px",
+                        "left": "20px",
+                        "right": "20px",
                     },
                 )
                 print(f"-> Đã lưu thành công: {file_name}")
 
             except Exception as e:
-                print(f"-> Lỗi khi xử lý {name}: {e}")
+                print(f"-> Lỗi tải {name}: {e}")
 
             finally:
                 await page.close()
