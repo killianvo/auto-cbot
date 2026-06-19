@@ -36,12 +36,27 @@ async def save_cme_to_pdf():
 
                 file_name = f"CME_{name}_Settlements_{date_str}.pdf"
 
-                # Xuất PDF có lề và có URL ở chân trang phục vụ Audit
+               # Xuất PDF nâng cao phục vụ Audit
                 await page.pdf(
                     path=file_name,
                     format="A4",
                     print_background=True,
                     display_header_footer=True,
+                    
+                    # 1. Scale lại còn 90% (0.9) hoặc 85% (0.85) tùy bạn chọn
+                    scale=0.9, 
+                    
+                    # 2. KHUYÊN DÙNG: Đổi sang khổ ngang (True) nếu bảng có nhiều cột bị che mất
+                    # Nếu vẫn muốn để khổ dọc thì bạn sửa lại thành False hoặc xóa dòng này đi
+                    landscape=True, 
+                    
+                    # 3. Chỉnh lề (Margin) để khoảng cách xung quanh cân đối, đẹp mắt
+                    margin={
+                        "top": "40px",
+                        "bottom": "40px",
+                        "left": "20px",
+                        "right": "20px"
+                    }
                 )
                 print(f"-> Đã lưu: {file_name}")
 
