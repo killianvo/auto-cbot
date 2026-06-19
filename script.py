@@ -14,7 +14,7 @@ async def save_cme_to_pdf():
     }
 
     async with async_playwright() as p:
-        # GIỮ NGUYÊN dòng launch này vì nó giúp bypass Cloudflare trên GitHub Actions thành công
+        # Giữ nguyên cấu hình bypass Cloudflare hoạt động tốt của bạn
         browser = await p.chromium.launch(
             headless=False, args=["--headless=new"]
         )
@@ -25,7 +25,6 @@ async def save_cme_to_pdf():
 
         date_str = datetime.now().strftime("%Y%m%d_%H%M")
 
-        # Lặp qua từng link để chụp PDF
         for name, url in urls.items():
             print(f"Đang xử lý {name}: {url}")
             page = await context.new_page()
@@ -34,10 +33,10 @@ async def save_cme_to_pdf():
                 await page.goto(
                     url, wait_until="domcontentloaded", timeout=60000
                 )
-                # Chờ 12 giây để bảng giá tải xong dữ liệu ban đầu
+                # Đợi 12 giây cho bảng dữ liệu cốt lõi tải xong
                 await page.wait_for_timeout(12000)
 
-                # 1. Cuộn xuống đáy để kích hoạt tải (lazy load) các tháng tương lai xa
+                # Cuộn chuột xuống đáy và lên đỉnh để ép load hết các tháng kỳ hạn xa
                 await page.evaluate(
                     "window.scrollTo(0, document.body.scrollHeight);"
                 )
@@ -45,52 +44,61 @@ async def save_cme_to_pdf():
                 await page.evaluate("window.scrollTo(0, 0);")
                 await page.wait_for_timeout(1000)
 
-                # 2. Thực thi Javascript dọn dẹp giao diện và bẻ gãy khung cuộn gây cắt hàng
+                # KỸ THUẬT QUAN TRỌNG: Tiêm bộ lọc CSS chặn đứng mọi loại bảng quảng cáo xuất hiện muộn
+                # Nhắm mục tiêu chính xác vào các khung quảng cáo góc trái/phải, hộp thoại khảo sát, phản hồi (feedback)
+                await page.add_style_tag(
+                    content="""
+                    /* 1. Ẩn menu chính, banner cookie và chân trang */
+                    header.cmeHeader, .cmeFooter, #onetrust-banner-sdk, #onetrust-consent-sdk, .cookie-consent, .modal-backdrop, .parbase.banner { 
+                        display: none !important; 
+                    }
+                    
+                    /* 2. TIÊU DIỆT TẬN GỐC BẢNG QUẢNG CÁO/KHẢO SÁT/FEEDBACK GÓC DƯỚI BÊN TRÁI VÀ PHẢI (Sửa lỗi cho Wheat) */
+                    [id*="onetrust"], [class*="onetrust"], [class*="privacy"], [id*="privacy"],
+                    [class*="feedback"], [id*="feedback"], [class*="survey"], [id*="survey"],
+                    [class*="popup"], [id*="popup"], [class*="modal"], [id*="modal"],
+                    .truste-cookie-banner, #tealium-consent, .invitation, #invitation,
+                    [class*="ad-slot"], [class*="advertisement"], [id*="google_ads"],
+                    iframe[src*="doubleclick"], iframe[src*="googleads"], div[id*="survey"] {
+                        display: none !important;
+                        visibility: hidden !important;
+                        opacity: 0 !important;
+                        height: 0 !important;
+                        width: 0 !important;
+                        pointer-events: none !important;
+                    }
+
+                    /* 3. Ép bẻ gãy khung cuộn để hiển thị đủ tất cả các tháng tương lai (Future months) */
+                    .cmeTable-wrapper, .table-responsive, .main-content, html, body {
+                        overflow: visible !important;
+                        max-height: none !important;
+                        height: auto !important;
+                    }
+                """
+                )
+
+                # Thực thi bổ sung bấm nút tắt Cookie bằng Javascript nếu nó xuất hiện sớm
                 await page.evaluate("""() => {
-                    // Tự động bấm nút Chấp nhận Cookie nếu có để dọn sạch màn hình
                     const cookieBtn = document.querySelector('#onetrust-accept-btn-handler');
                     if (cookieBtn) cookieBtn.click();
-
-                    // Ẩn menu quảng cáo và footer, GIỮ LẠI tiêu đề chứa ngày Trade Date ("Data as of...")
-                    const elementsToHide = [
-                        'header.cmeHeader', 
-                        '.cmeFooter', 
-                        '#onetrust-banner-sdk', 
-                        '#onetrust-consent-sdk',
-                        '.cookie-consent',
-                        '.modal-backdrop',
-                        '.parbase.banner'
-                    ];
-                    elementsToHide.forEach(selector => {
-                        const el = document.querySelector(selector);
-                        if (el) el.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // SỬA LỖI CẮT HÀNG (Future Months): Ép các khung cuộn chứa bảng phải hiển thị tràn trang tự nhiên
-                    const wrappers = document.querySelectorAll('.cmeTable-wrapper, .table-responsive, .main-content');
-                    wrappers.forEach(el => {
-                        el.style.setProperty('overflow', 'visible', 'important');
-                        el.style.setProperty('max-height', 'none', 'important');
-                        el.style.setProperty('height', 'auto', 'important');
-                    });
-
-                    document.body.style.setProperty('overflow', 'visible', 'important');
-                    document.body.style.setProperty('height', 'auto', 'important');
                 }""")
 
-                # Chờ thêm 2 giây để giao diện cập nhật sau khi chạy JS ổn định layout
+                # Chờ thêm 2 giây để toàn bộ bố cục trang phẳng lặng hoàn toàn trước khi bấm in
                 await page.wait_for_timeout(2000)
+
+                # Chuyển sang định dạng media bản in
+                await page.emulate_media(media="print")
 
                 file_name = f"CME_{name}_Settlements_{date_str}.pdf"
 
-                # 3. Xuất file PDF khổ ngang sắc nét phục vụ kiểm toán
+                # Xuất bản in khổ ngang sắc nét chuẩn kiểm toán
                 await page.pdf(
                     path=file_name,
                     format="A4",
                     print_background=True,
                     display_header_footer=True,
-                    scale=0.85,  # Thu nhỏ nhẹ về 85% để các cột Open, High, Low, Settle vừa vặn khổ ngang
-                    landscape=True,  # Khổ ngang cực kỳ lý tưởng cho bảng biểu tài chính rộng nhiều cột
+                    scale=0.85,
+                    landscape=True,
                     margin={
                         "top": "40px",
                         "bottom": "40px",
