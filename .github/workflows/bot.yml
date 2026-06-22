@@ -2,9 +2,8 @@ name: Auto Get CME PDF
 
 on:
   schedule:
-    # Chạy vào 15:00 chiều giờ VN (8:00 UTC), chỉ chạy từ Thứ 2 đến Thứ 6 (1-5)
-    # Tự động bỏ qua Thứ 7 và Chủ Nhật
-    - cron: '0 8 * * 1-5'
+    # Chạy vào 15:17 chiều giờ VN (8:17 UTC) - Né giờ tròn để bot chạy nhanh hơn
+    - cron: '17 8 * * 1-5'
   workflow_dispatch: # Nút này cho phép bạn bấm chạy thủ công bất kỳ lúc nào
 
 jobs:
