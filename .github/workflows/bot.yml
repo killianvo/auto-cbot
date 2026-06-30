@@ -1,10 +1,12 @@
+YAML
 name: Auto Get CME PDF
 
 on:
   schedule:
-    # Chạy vào 15:17 chiều giờ VN (8:17 UTC) - Né giờ tròn để bot chạy nhanh hơn
-    - cron: '17 8 * * 1-5'
-  workflow_dispatch: # Nút này cho phép bạn bấm chạy thủ công bất kỳ lúc nào
+    # 00:00 UTC tương đương đúng 7:00 sáng giờ VN
+    # 2-6 tương đương từ Thứ 3 đến Thứ 7 (Né Chủ Nhật và Thứ 2 vì sàn Mỹ đóng cửa cuối tuần)
+    - cron: '0 0 * * 2-6'
+  workflow_dispatch: # Nút bấm chạy thủ công khi cần gấp
 
 jobs:
   build:
@@ -27,16 +29,27 @@ jobs:
       - name: Chạy Bot lấy dữ liệu
         run: python script.py
 
-      - name: Tính toán ngày dữ liệu (Ngày hôm qua)
+      # --- CẢI TIẾN: TỰ ĐỘNG NHẬN DIỆN THỨ 2 ĐỂ LẤY NGÀY THỨ 6 TUẦN TRƯỚC ---
+      - name: Tính toán ngày dữ liệu
         id: date_calc
         run: |
-          # Lấy thời gian hiện tại trừ đi 1 ngày, định dạng thành Ngày-Tháng (Ví dụ: 18-06)
-          echo "DATA_DATE=$(date -d "yesterday" +'%d-%m')" >> $GITHUB_ENV
+          # date +%u trả về số từ 1-7 tương ứng Thứ 2 - Chủ Nhật
+          CURRENT_DAY=$(date +%u)
+          
+          if [ "$CURRENT_DAY" -eq 1 ]; then
+            # Nếu hôm nay là Thứ 2, lùi lại 3 ngày để lấy ngày Thứ 6 tuần trước
+            echo "DATA_DATE=$(date -d "3 days ago" +'%d-%m')" >> $GITHUB_ENV
+            echo "Phát hiện Thứ 2: Đã đặt tên theo ngày Thứ 6 tuần trước"
+          else
+            # Các ngày khác (Thứ 3 đến Thứ 7), lấy ngày hôm qua (d-1) như cũ
+            echo "DATA_DATE=$(date -d "yesterday" +'%d-%m')" >> $GITHUB_ENV
+            echo "Các ngày khác: Đã đặt tên theo ngày hôm qua"
+          fi
 
       - name: Lưu trữ 3 file PDF
         uses: actions/upload-artifact@v4
         with:
-          # File zip tải về sẽ có tên kèm ngày dạng: CME-Data-18-06
+          # File zip tải về sẽ có tên kèm ngày động chính xác theo logic trên
           name: CME-Data-${{ env.DATA_DATE }}
           path: "*.pdf"
           retention-days: 90
